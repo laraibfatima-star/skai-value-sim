@@ -1,0 +1,1350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skai Value Simulator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            skai: {
+              50:  '#eef3fe',
+              100: '#dce7fd',
+              200: '#b9cefb',
+              300: '#8fb4f8',
+              400: '#6190f4',
+              500: '#4a7af2',
+              600: '#406EF1',
+              700: '#2d55cc',
+              800: '#1f3ea0',
+              900: '#111428',
+            },
+            'sky-teal': {
+              50:  '#f0f8fd',
+              100: '#e1f1fb',
+              200: '#c3e3f7',
+              300: '#A2D8EF',
+              400: '#7ec4e8',
+              500: '#669AD2',
+              600: '#4a7db5',
+              700: '#375e8a',
+            },
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+
+    // ── Benchmarks: Skai Q3 2026 Quarterly Trends Report ──────────────────────
+    const BM = {
+      search: { cpc: 0.98, ctr: 0.0408, cvr: 0.0466, aov: 140.59, cpm: 40.11 },
+      social: { cpc: 0.68, ctr: 0.0084, cvr: 0.0121, aov: 129.63, cpm: 5.71 },
+      retail: { cpc: 1.01, ctr: 0.0047, cvr: 0.2839, aov: 22.8, cpm: 4.76 },
+    };
+
+    const CHANNELS_DEF = [
+      { id: "search", label: "Search",       icon: "🔍", desc: "Google · Bing · Apple" },
+      { id: "social", label: "Social",       icon: "📱", desc: "Meta · TikTok · Pinterest" },
+      { id: "retail", label: "Retail Media", icon: "🛒", desc: "Amazon · Walmart · Instacart" },
+    ];
+
+    const STEPS = ["Channels & KPI", "Spending", "Performance", "Results"];
+    const STATE_VERSION = 1;
+    const LS_STATE_KEY = "svs_state_v1";
+    const LS_SCENARIOS_KEY = "svs_scenarios_v1";
+
+    const KPIS = [
+      { id: "cpa",  icon: "🎯", label: "CPA / Conversions", desc: "Cost to acquire a customer" },
+      { id: "roas", icon: "💰", label: "ROAS / Revenue",    desc: "Revenue per dollar spent" },
+      { id: "acos", icon: "📊", label: "ACOS / TACOS",      desc: "Ad cost as % of revenue (Retail Media)" },
+    ];
+
+    const fmt = {
+      $: (v) => {
+        if (v == null || isNaN(v)) return "—";
+        if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+        if (v >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
+        return `$${v.toFixed(0)}`;
+      },
+      pct: (v) => (v == null || isNaN(v) ? "—" : `${(v * 100).toFixed(1)}%`),
+      x:   (v) => (v == null || isNaN(v) ? "—" : `${v.toFixed(2)}x`),
+      n:   (v) => {
+        if (v == null || isNaN(v)) return "—";
+        if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+        if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
+        return Math.round(v).toLocaleString();
+      },
+      acos: (v) => (v == null || isNaN(v) ? "—" : `${(v * 100).toFixed(1)}%`),
+      delta: (v) => (v > 0 ? `+${v.toFixed(1)}%` : `${v.toFixed(1)}%`),
+      roi: (v) => (v == null || isNaN(v) ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(0)}%`),
+      date: (ts) => {
+        try {
+          const d = new Date(ts);
+          return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        } catch (e) { return ""; }
+      },
+    };
+
+      // AUTO-GENERATED from the Q3 2026 comps sheets — raw QoQ fractions (0.08 = +8%).
+      const QOQ_DATA = {"retail": {"cvr": [-0.0005, -0.0548, -0.5381, -0.1997, 0.0047, 0.012, 0.0036, 0.0791, 0.0656, -0.071, 0.0651, -0.131, -0.0935, -0.1532, -0.1655, 0.3286, -0.1065, -0.3011, 0.0201, 0.0694, -0.0082, -0.1249, 0.0093, -0.1506, -0.1504, -0.0743, 0.0974, -0.1346, -0.1192, 0.0155, 0.2313, -0.1352, -0.32, -0.0409, -0.0206, 0.0908, -0.094, 0.0047, -0.3352, -0.3179, 0.1928, 0.0794, -0.1311, -0.0285, 0.0096, 0.351, -0.1949, -0.0336, -0.0087, 0.0375, -0.0247, 0.0051, 0.0414, 0.0448, -0.3816, -0.015, 0.076, 0.4314, 0.101, -0.0419, -0.0792, -0.1746, 0.3307, -0.0159, -0.0491, -0.1288, -0.3097, -0.1038, -0.0452, -0.1321, 0.0361, -0.0704, -0.1096, -0.125, -0.0065, -0.0585, -0.1387, 0.0544, 0.0081, -0.3185, -0.5549, -0.0238, 0.0056, -0.0458, 0.1077, -0.1031, -0.1015, -0.175, -0.1896, -0.1973, 0.0491, 0.0328, -0.1046, -0.0222, 0.0749, -0.0979, -0.0477, 0.0512, 0.0032, -0.1916, -0.1189, -0.0124, 0.0338, -0.0129, -0.0265, 0.0882, 0.0251, -0.0783, -0.0482, -0.1279, 0.0469, -0.4324, -0.0976, 0.0199, 0.2902, 0.3758, -0.0909, -0.3358, -0.2091, 0.1031, -0.3474, 0.0981, -0.0182, 0.028, 0.056, -0.5485, 0.3121, 0.0525, 0.1629, -0.1878, 0.1904, 0.0501, -0.0564, -0.2, -0.2184, -0.0109, -0.0197, 0.0153, 0.1149, -0.0124, -0.0636, 0.083, -0.0718, -0.1653, 0.0718, -0.0591, 0.1611, -0.0946, -0.0521, -0.0818, -0.1488, 0.0752, -0.1419, -0.0987, -0.1242, -0.3058, -0.0945, -0.6841, -0.1559, -0.0734, -0.1846, -0.1347, 8.541, -0.047, 0.0423, 0.1388, -0.318, -0.2825, 0.0213, -0.2703, -0.0206, 0.0271, -0.1253, -0.0473, 0.0112, 0.155, 0.1626, -0.1424, -0.0044, -0.4047, -0.0823, -0.1078, -0.0801, 0.0162, -0.174, -0.2805, 1.0003, -0.0246, -0.104, 0.5852, -0.2893, -0.2366, -0.0055, -0.2203, -0.5596, -0.0538, 0.1966, -0.1138, -0.0177, -0.073, 0.059, 0.0436, -0.0021, -0.0406, -0.1055, 0.1162, -0.0164, 0.4015, -0.0066, 0.0181, -0.1462, 0.0226, -0.3351, -0.0684, 0.0662, -0.074, -0.2452, 0.0046, 0.1563, -0.2417, -0.0144, -0.0707, -0.1096, -0.07, -0.0397, -0.109, -0.2081, -0.1602, 0.0234, -0.35, 0.0306, -0.0345, -0.0479, 0.0778, -0.098, -0.0946, -0.107, -0.099, -0.0385, 0.2396, 0.0098, -0.1667, 0.0643, -0.0019, 0.0305, -0.1009, -0.1094, -0.0485, -0.1534, -0.0039, -0.0314, -0.0313, -0.0277, 0.0214, -0.1762, -0.0085, -0.0859, 0.1973, -0.1642, -0.0515, -0.0183, -0.1479, -0.1163, -0.0722, -0.2393, 0.5588, -0.0331, -0.0459, -0.641, 0.0124, -0.0156, -0.4893, -0.2275, 0.6797, -0.0727, 0.004, -0.1138, -0.0627, 0.1258, 0.3507, -0.0137, -0.1276, 0.1582, 0.0261, -0.2041, 0.3732, 0.054, 0.4138, -0.0469, -0.0469], "cpc": [-0.0822, 0.0681, -0.6543, -0.1312, 0.0937, 0.011, -0.0639, 0.073, 0.0257, -0.0353, 0.1824, -0.1588, -0.0504, -0.1584, -0.1666, 0.0902, -0.0488, -0.2758, -0.0627, -0.0055, 0.1172, 0.0089, -0.152, -0.0825, 0.023, 0.1722, 0.1891, -0.0523, 0.1451, -0.2027, 0.0486, -0.0192, -0.1602, 0.1201, -0.1011, 0.0516, -0.0573, -0.136, 0.0952, -0.1016, -0.2703, 0.0214, 0.1813, -0.2186, -0.1154, 0.3272, -0.4741, -0.0616, -0.043, -0.2034, 0.0342, -0.0954, -0.1462, 0.0369, 0.1865, -0.1994, 0.0817, 0.3449, -0.0935, 0.1804, -0.1898, 0.0318, 0.2594, 0.1364, 0.188, -0.0815, -0.2078, 0.0465, -0.0139, -0.0618, 0.0325, 0.0177, -0.073, -0.0231, 0.1401, 0.1745, -0.201, 0.4833, -0.0081, -0.2621, -0.1317, -0.0404, -0.0234, -0.0757, 0.0617, -0.0847, -0.0177, 0.3103, 0.0189, -0.202, -0.1065, 0.3519, -0.1167, -0.2165, -0.3466, 0.0055, 0.0325, -0.1274, 0.0965, -0.0449, -0.1532, 0.0315, -0.0428, -0.0502, -0.1651, -0.2641, 0.0928, -0.1308, -0.0739, 0.0524, 0.1864, 0.3231, 0.157, 0.0618, 0.1046, 0.0838, -0.0885, -0.2673, -0.0745, -0.0143, -0.1741, 0.0817, -0.0723, -0.2791, -0.1873, -0.1247, -0.0568, 0.1238, -0.1972, -0.2435, -0.0755, 0.1679, -0.1099, -0.1878, 0.0739, -0.0328, -0.0566, -0.0063, -0.5981, -0.0078, 0.2293, -0.0404, -0.0915, -0.0582, -0.1402, -0.0463, 0.1347, -0.3074, 0.2431, -0.0521, -0.0675, -0.1741, -0.0314, 0.0265, 0.0525, 0.0534, -0.1371, -0.153, 0.0442, 0.0976, -0.0692, -0.0599, 5.8192, 0.0793, 0.0021, 0.2043, -0.2789, -0.2118, 0.0901, -0.4347, 0.0708, 0.2595, -0.0348, 0.0696, -0.2887, -0.0464, 0.1861, 0.0172, -0.0559, 0.0388, 0.0299, 0.2738, -0.0156, 0.2849, -0.0626, -0.1832, -0.1715, 0.0183, -0.2099, -0.0974, -0.3326, -0.3274, -0.0612, -0.3189, -0.561, -0.0914, 0.0038, 0.0312, 0.0665, 0.0582, -0.0774, -0.1859, -0.0959, 0.0018, -0.1547, 0.0815, -0.1479, 0.0074, 0.1301, -0.0172, -0.1686, -0.1457, -0.2501, -0.1002, 0.1171, 0.3341, -0.2084, 0.0885, 0.0163, -0.2429, 0.1106, -0.1242, 0.0155, -0.2356, -0.2365, -0.0309, -0.2543, 3.4966, -0.0833, 0.0856, -0.0002, -0.0986, -0.0121, 0.0529, 0.1774, -0.1795, -0.1771, -0.0046, -0.2043, 0.4564, 0.4628, -0.0016, 0.8142, 0.1622, -0.0225, 0.0743, -0.1119, -0.0156, -0.2017, -0.2543, 0.2945, 0.0374, -0.1345, -0.0325, -0.053, 0.0607, 0.1297, 0.1394, 0.1315, -0.2193, -0.0731, -0.0127, -0.3648, -0.135, -0.2888, 0.0805, -0.5062, 0.1533, 0.0258, -0.594, 0.0565, 0.4255, -0.0472, -0.0973, 0.0031, 0.0462, 0.0618, -0.1174, 0.1643, 0.2496, -0.0168, 0.0374, -0.1488, -0.1754, -0.2653, -0.228, 0.0548, 0.2424, 0.2911, -0.0257, 0.0374], "aov": [-0.081, 0.1152, 0.0446, -0.0138, -0.0299, 0.0187, 0.068, -0.0416, -0.071, 0.107, -0.0128, 0.1607, 0.0031, 0.073, 0.1617, 0.3753, 0.1959, 0.0406, -0.0491, 0.034, 0.0181, 0.0354, 0.104, -0.046, -0.0317, 0.0117, -0.0092, -0.1602, -0.0411, 0.0107, -0.0898, 0.1286, -0.0151, -0.0346, -0.0142, 0.1173, -0.0028, -0.0616, 0.4586, 0.1751, -0.0264, 0.2972, 0.0097, 0.051, -0.2962, 0.0534, -0.0611, -0.0427, -0.0745, 0.1415, 0.0482, 0.0319, -0.026, 0.8721, 0.103, 0.1154, -0.0373, 0.3964, -0.1546, -0.0009, 0.0782, 0.0127, 0.0655, 0.2119, 0.0898, 0.0596, 0.1491, 0.0037, 0.0924, -0.0856, 0.0015, 0.0169, 0.0538, -0.0454, 0.5712, -0.0562, 0.0231, 0.3536, 0.1572, -0.349, -0.1382, -0.0136, -0.0024, -0.0341, -0.0384, 0.0874, -0.0802, 0.0896, 0.0203, -0.0598, -0.1375, -0.0677, 0.2056, 0.0189, -0.0359, 0.0109, -0.0732, -0.0055, 0.1456, 0.1503, -0.0525, -0.0123, -0.0139, 0.0463, -0.0978, 0.0407, 0.386, -0.0156, 0.1625, -0.2031, -0.0013, -0.4302, -0.237, -0.3733, -0.0199, 0.0107, 0.2805, -0.0139, 0.0486, 0.1572, -0.2718, 0.086, -0.0536, -0.0091, 0.0435, -0.2317, 0.0073, -0.0085, 0.0907, -0.1136, -0.1208, 0.0797, 0.3502, 0.0369, -0.0631, 0.0352, -0.0057, -0.0331, 0.0453, -0.03, -0.112, -0.0265, 0.0253, -0.0983, 0.0187, 0.017, -0.0148, -0.0129, 0.0023, 0.102, -0.0004, 0.1634, 0.3151, -0.0448, -0.1017, -0.204, -0.0701, -0.0176, -0.0217, 0.0022, 0.0399, 0.0029, -0.0734, 0.4351, 0.0069, 0.0281, 0.109, -0.0212, -0.1693, -0.0349, -0.0241, 0.0996, -0.0681, -0.017, 0.1543, 0.047, -0.2647, 0.1679, 0.1226, 0.0949, -1.0, -0.0271, 0.9642, 0.7425, 0.022, 0.1894, 0.0904, 0.1224, -0.003, -0.0104, 0.0993, 0.0285, -0.0475, -1.0, 0.0664, 0.0189, 0.185, 0.0486, 0.406, 0.0534, 0.0359, 0.0041, -0.0857, 0.3129, 0.1417, 0.0619, -0.0151, 0.0221, 0.0057, 0.1614, -0.0355, -0.0157, -0.0435, -0.0435, 0.0349, 0.0167, 0.1219, 0.0211, -0.4941, 0.0371, 0.2332, -0.0525, -0.0685, 0.0172, -0.0652, -0.0467, -0.1144, 0.1911, 0.0102, -0.002, 0.0304, -0.0259, 0.0329, 0.0046, -0.0121, -0.1673, 0.4656, 0.0142, 0.0785, -0.0034, 0.1125, -0.021, 0.0386, -0.064, -0.0347, 0.1037, 0.0132, 1.4064, 0.0851, 0.0633, -0.0867, 0.0334, 0.0581, -0.0534, 0.2318, 0.1717, 0.0195, -0.0601, -0.0258, 0.0792, -0.0673, -0.0555, 0.2211, 0.036, -0.7048, -0.0707, -0.009, -0.1304, 0.1696, 0.4499, 0.1247, -0.0158, -0.0126, -0.1337, -0.1399, -0.1498, -0.0521, -0.3524, -0.121, -0.0731, -0.1207, 0.056, 0.0022, 0.1675, 0.0429]}, "search": {"cvr": [-0.0511, 0.0737, 0.3963, -0.4036, -0.1715, 0.093, -0.0704, -0.8597, -0.0701, -0.0517, -0.131, 0.7216, -0.9425, -0.0981, -0.1596, -0.0291, -0.0517, -0.0343, -0.3443, -0.645, -0.1229, -0.3982, -0.0081, -0.3251, -0.2023, -0.1557, -0.2116, 0.0661, -0.4427, -0.2213, 0.0295, -0.0109, -0.6767, -0.6076, -0.3089, -0.8923, -0.2897, -0.8468, 1.8547, 27.4978, -0.1345, -0.9336, 3.7641, -0.1019, -0.4109, -0.1606, -0.4792, -0.275, -0.5305, 1.9908, 1.7178, -0.081, -0.0122, -0.1679, 1.2194, -0.0014, 1.4802, 0.0346, -0.6436, -0.2557, -0.512, 1.133, 0.5664, -0.9795, -0.9501, -0.1339, -0.1998, -0.6945, -0.7701, 0.24, 0.1502, -0.7948, -0.2396, -0.5841, 0.1042, 0.2659, 5.23, -0.3577, -0.0443, -0.3372, 0.0096, -0.0746, -0.4129, -0.2685, -0.6684, -0.0397, 0.9801, -0.1688, -0.4082, 0.2365, -0.6453, -0.1077, -0.3288, 0.1825, 0.4073, 0.0223, -0.4534, -0.4175, 8.4415, 0.8625, -0.4795, 0.6608, -0.3186, -0.8334, -0.8886, 1.5537, -0.2192, 0.2781, 0.1498, -0.2714, -0.9556, -0.0811, -0.1793, 0.3634, 0.0876, 0.5686, -0.0754, 0.373, -0.4846, -0.42, -0.4772, -0.638, 1.2005, -0.5558, -0.1431, -0.807, -0.2206, -0.0547, -0.4653, -0.433, -0.1006, -0.3822, -0.3779, 0.0406, -0.3435, 14.3792, -0.5106, -0.7096, -0.3238, -0.2999, 27.9078, -0.9581, -0.8725, 0.2075, 0.6337, -0.0901, 0.1696, 0.0137, -0.4575, 0.0096, -0.3009, -0.2054, 0.0155, -0.4686, -0.6337, 0.9292, -1.0, 9.3609, 0.8827, -0.0824, -0.1881, 1.2897, 0.2793, -0.2002, 0.0087, 0.1032, -0.2308, -0.4956, -0.436, 0.3963, 0.3437, -0.3728, 0.3241, 0.2908, 1.5907, -0.3101, 0.1709, -0.1471, 0.075, -0.1524, 0.8751, 0.2434, -0.0396, -0.6261, -0.1446, 0.4065, 0.1833, -0.1954, -0.0657, 0.4392, -0.4192, 0.0835, 0.13, 0.001, 0.5826, -0.3772, 0.2397, -0.058, -0.0341, 0.231, -0.3232, -0.8471], "cpc": [-0.0041, 0.0225, 0.1884, 0.9102, 0.8885, 0.1435, 0.0732, -0.1296, -0.1427, 0.068, 0.0667, 0.0992, 0.0955, 0.0086, 0.0395, -0.0516, 0.1278, 0.019, -0.0132, -0.0511, -0.0776, 0.0132, 0.0238, -0.0275, -0.1757, -0.0009, 0.072, -0.015, -0.2599, 0.0063, 0.0913, -0.0403, 0.0867, -0.4478, 0.0204, 0.2006, -0.2014, -0.0791, 0.0266, 0.0582, 0.01, -0.1614, -0.1297, -0.0069, 0.0224, 0.0934, -0.5953, -0.1052, -0.0089, -0.1449, 0.1196, -0.0624, 0.0129, -0.0375, 0.021, -0.1995, -0.002, -0.0609, -0.1008, -0.012, 0.0273, 0.1465, 0.2114, -0.0238, -0.0238, -0.1466, -0.1338, 0.0237, 0.4956, 0.0062, -0.2805, -0.093, -0.1675, -0.3435, -0.2022, -0.1483, 0.1461, 0.1392, -0.106, -0.0347, 0.1592, -0.2374, 0.0538, 0.0238, 0.1245, -0.0288, 0.1631, -0.0401, 0.0191, -0.1016, -0.1002, -0.0291, 1.2051, 0.1397, 0.4062, 0.0644, 1.1495, 0.2247, 0.0324, 0.585, 0.0469, -0.0464, 2.3552, 0.0878, -0.0109, 0.1511, 0.0936, 0.0356, 0.1176, 0.0561, 0.0143, 0.0848, -0.5411, -0.1045, -0.0284, -0.4079, 0.0487, -0.4235, -0.2637, 0.0579, 0.6912, -0.2204, 0.5125, 0.0928, 0.1105, -0.5462, -0.2242, 0.2653, -0.3334, 0.0171, -0.2258, -0.0502, -0.0938, 0.0268, -0.5225, 0.4414, 0.4202, -0.1652, 0.1498, -0.0319, 0.4172, -0.0878, -0.3493, 0.2678, 0.2238, 0.0887, 0.442, 0.0171, 0.1927, -0.0973, 0.341, -0.1801, 0.194, -0.066, -0.0069, -0.018, 0.1548, -0.1226, -0.4592, -0.0275, 0.0818, 0.0743, -0.1164, 0.0434, 0.0299, 0.1193, 0.0716, -0.0787, 0.1399, 0.0542, -0.1943, 0.1568, -0.0557, -0.4574, -0.2159, 0.1227, -0.143, -0.1969, -0.1773, 0.0418, -0.009, -0.2088, -0.0185, 0.1159, -0.1745, -0.2594, 0.3279, 0.0314, 0.0709, 0.0795, -0.1153, 0.3369, 0.428, -0.1395, -0.5199, -0.3387, 0.0865, 0.3912, -0.0686, 0.3989, -0.1338, -0.1283, -0.0046, 0.0876, -0.0335, 0.2054, 0.0036, -0.2084, -0.1819, 0.0571, -0.0901, 0.1731, -0.0334, 0.065, -0.3946, -0.1798, 0.5793, -0.0183, -0.0939, 0.1302, -0.0162, 0.2326, -0.063, -0.0393, 0.0522, -0.1257, -0.0658, 0.1274, 0.162, 0.1103, -0.137, 0.5145, -0.319, -0.1127, -0.2848, 0.4127, -0.15, 0.1735, -0.428, -0.0557, 0.0428, -0.1492, 0.2678, -0.0094, 0.1279, 0.0493, -0.0275, 0.1255, 0.8216, -0.0454, 0.4686, -0.033, 0.0761, -0.1571, -0.0379, -0.0829, 0.0929, 0.5881, -0.3316, 0.1827, -0.086, -0.067, 0.115, -0.1653, 1.1702], "aov": [0.0452, 0.24, 0.2171, 1.0039, -0.0612, -0.0858, 0.0186, -0.3519, -0.0468, -0.0929, 0.0789, -0.3283, 8.9868, 0.0325, 0.1434, 0.0484, 0.054, 0.1097, -0.4458, 1.2751, 0.1118, 0.0277, -0.0058, 0.045, 0.2003, -0.0037, 0.0355, -0.1296, 0.7134, 0.2107, -0.094, -0.0137, 3.0049, 0.4448, 2.1723, 0.2039, 1.4068, -0.2263, -0.9794, 0.0612, -0.1265, 0.0088, 0.0239, 0.3096, -0.0429, 0.0021, 1.0816, -0.63, -0.6163, 0.0417, 0.1506, 0.3332, 0.0737, -0.091, -0.4221, 0.0, 1.8162, 0.1522, 0.1932, -0.5132, 0.1147, 3.9068, 2.3302, -0.0231, 0.0687, 2.5885, 2.3433, 0.0909, -0.1025, 3.8159, -0.0975, -0.1915, -0.1769, 0.0, 0.0776, 0.2263, 0.1213, -0.3332, 0.0412, 0.172, 0.7851, 0.4815, 0.0197, -0.3591, 0.9643, -0.0155, -0.6751, 9.8849, -0.2398, -0.2692, -0.0913, -0.8472, -0.2257, 0.0167, 0.068, -0.8594, -0.4337, -0.145, 0.201, 0.0116, -0.2958, 0.5669, 0.1131, 0.1997, 0.2074, 0.9909, 0.0955, 0.0783, 0.0244, -0.1717, -0.0451, -0.6386, -0.0652, -0.1931, 0.4038, 0.0699, 1.1251, 1.8825, -0.1388, 0.4573, 0.0565, 3.2251, 0.0586, 0.0859, -0.1226, -0.3409, 0.0271, -0.0092, -0.0424, 0.0011, -0.1647, -0.1863, 0.4904, -0.3268, -0.0141, -0.9827, 1.8845, 0.9769, 3.6509, -0.0696, 3.2674, 0.1402, -0.0512, 0.9429, 0.0799, 0.153, 0.5595, -0.0235, 0.5594, -0.1203, -0.71, -1.0, -0.9186, -0.4367, 0.0113, -0.0875, -0.4742, -0.0599, 0.2048, 0.0396, -0.1183, 0.0483, 0.0451, 0.6433, 0.118, -0.0525, -0.0218, -0.1462, -0.4578, -0.6131, 1.7536, 0.0038, 0.1719, 0.2829, -0.0343, -0.6871, 0.0831, -0.5452, -0.0433, -0.0389, -0.4717, 0.0921, -0.2006, -0.1714, -0.0587, -0.1574, -0.0501, -0.0026, -0.0121, 0.0103, -0.0265, -0.0236, 0.1846]}, "social": {"cvr": [0.4682, -1.0, 4.6873, -0.6566, -0.0449, -0.9553, 0.6669, -0.1705, -0.4466, -1.0, 0.2866, 232.2294, 0.5356, -0.105, 0.6328, -0.6753, 88012.12, 0.1449, -0.19, 0.314, -0.4972, 0.0307, -0.1593, -0.2809, -0.0093, -0.492, -0.0948, 10.9378, -0.5468, -0.6275, 0.4941, -0.5997, 0.4933, 0.1864], "cpm": [0.2565, 0.6755, 0.3163, -0.0275, 0.2023, -0.2297, -0.1675, 0.124, -0.0271, 0.0232, -0.4838, -0.524, 0.0219, -0.0792, -0.1442, 0.2121, 0.1652, 0.4436, 0.0532, -0.0539, 0.0518, -0.2941, -0.316, -0.0721, -0.1121, -0.2559, 0.2783, 0.1224, 0.3422, 0.127, -0.2649, 0.1133, 0.0498, 0.3122, 0.166, 0.1134, 0.9532, -0.0063, 0.1778, 0.0788, -0.31, -0.2321, 0.2298, -0.8101, 0.319, -0.3183, -0.0505, -0.2085, 0.002, 0.3595, 0.197, -0.2201, -0.2969, -0.5589, 0.3355, -0.0412, 0.1241, -0.2266, -0.1226, -0.0012, 0.3077, 0.0013, -0.1436, 0.2336, 0.0577, 0.4038, -0.1678, -0.1049, -0.2087, -0.2239, 0.4992, -0.1373, 0.0752, -0.0235, -0.0174, 0.083, -0.0387, -0.1609, -0.0089, 0.2723, 0.0928, -0.0349, 0.2915, 0.0329, -0.1431, 0.1432], "aov": [-0.057, -1.0, 0.3164, 0.0964, 20.395, -0.046, 0.0169, -0.0291, -1.0, -0.1267, -0.8583, 0.0322, 0.1469, -0.1368, 0.1501, 0.0421, 0.0488, -0.0331, -0.2985, 0.2781, 0.743, 0.6409, -0.0615, -0.5055, -0.0236, -0.1219, 0.1736, 0.64, -0.0385, 0.5173, 0.1081, -0.1009]}};
+
+      const QOQ_RANGE = { min: -0.6, max: 0.6, bins: 12 };
+
+      function qoqMetric(channel, sliderKey) {
+        if (sliderKey === "cpc") return channel === "social" ? "cpm" : "cpc";
+        return sliderKey;
+      }
+      function qoqArray(channel, metric) {
+        const c = QOQ_DATA[channel];
+        return c && c[metric] ? c[metric] : null;
+      }
+      function feasibilityPct(channel, metric, target, dir) {
+        const a = qoqArray(channel, metric);
+        if (!a || !a.length) return null;
+        let k = 0;
+        for (const x of a) if (dir === "le" ? x <= target : x >= target) k++;
+        return Math.round((k / a.length) * 1000) / 10;
+      }
+      function verdictFor(pct, n) {
+        if (pct == null) return { label: "no data", tone: "none" };
+        let label, tone;
+        if (pct > 50)       { label = "Very achievable"; tone = "good"; }
+        else if (pct >= 25) { label = "Realistic";       tone = "ok";   }
+        else if (pct >= 10) { label = "Ambitious";       tone = "warn"; }
+        else                { label = "Very optimistic"; tone = "bad";  }
+        if (n < 20) label += " (directional, n=" + n + ")";
+        return { label, tone };
+      }
+      function histogramBins(channel, metric) {
+        const a = qoqArray(channel, metric);
+        if (!a || !a.length) return [];
+        const { min, max, bins } = QOQ_RANGE;
+        const w = (max - min) / bins;
+        const out = [];
+        for (let i = 0; i < bins; i++) out.push({ x0: min + i * w, x1: min + (i + 1) * w, count: 0 });
+        for (const x of a) {
+          let idx = Math.floor((x - min) / w);
+          if (idx < 0) idx = 0;
+          if (idx >= bins) idx = bins - 1;
+          out[idx].count++;
+        }
+        const maxCount = out.reduce((m, b) => Math.max(m, b.count), 0) || 1;
+        out.forEach((b) => (b.frac = b.count / maxCount));
+        return out;
+      }
+      function qoqStats(channel, sliderKey, sliderValuePct) {
+        const metric = qoqMetric(channel, sliderKey);
+        const a = qoqArray(channel, metric);
+        if (!a) return null;
+        const signed = sliderValuePct / 100;
+        const dir = sliderKey === "cpc" ? "le" : "ge";
+        const isBaseline = sliderValuePct === 0;
+        const pct = isBaseline ? null : feasibilityPct(channel, metric, signed, dir);
+        const { min, max } = QOQ_RANGE;
+        const markerFrac = Math.max(0, Math.min(1, (signed - min) / (max - min)));
+        return {
+          channel, metric, dir, target: signed, pct, n: a.length,
+          bins: histogramBins(channel, metric),
+          verdict: isBaseline ? { label: "baseline", tone: "none" } : verdictFor(pct, a.length),
+          markerFrac,
+        };
+      }
+      function netRoi(totRev, totSpend, fee) {
+        const denom = totSpend + fee;
+        if (!(denom > 0)) return null;
+        return (totRev - totSpend - fee) / denom;
+      }
+
+    function computeChannel(rawSpend, ch, userVals, period) {
+      const mult = period === "annually" ? 1 : 1 / 12;
+      const s = (rawSpend || 0) * mult;
+      const bm = BM[ch];
+      const cpc = userVals.cpc != null ? userVals.cpc : bm.cpc;
+      const ctr = userVals.ctr != null ? userVals.ctr : bm.ctr;
+      const cvr = userVals.cvr != null ? userVals.cvr : bm.cvr;
+      const aov = userVals.aov != null ? userVals.aov : bm.aov;
+      const cpm = userVals.cpm != null ? userVals.cpm : bm.cpm;
+
+      let clicks, impressions;
+      if (ch === "social") {
+        impressions = cpm > 0 ? (s / cpm) * 1000 : 0;
+        clicks = impressions * ctr;
+      } else {
+        clicks = cpc > 0 ? s / cpc : 0;
+        impressions = ctr > 0 ? clicks / ctr : 0;
+      }
+
+      const conversions = clicks * cvr;
+      const revenue = conversions * aov;
+      const cpa  = s > 0 && conversions > 0 ? s / conversions : null;
+      const roas = s > 0 ? revenue / s : null;
+      const acos = revenue > 0 ? s / revenue : null;
+      return { spend: s, impressions, clicks, conversions, revenue, cpa, roas, acos };
+    }
+
+    function resolveUm(rawUm) {
+      const r = {};
+      for (const [k, v] of Object.entries(rawUm || {})) {
+        r[k] = v !== "" && v != null ? parseFloat(v) / (["ctr", "cvr"].includes(k) ? 100 : 1) : null;
+      }
+      return r;
+    }
+
+    function computeAll(snap) {
+      let totSpend = 0, totRev = 0, totConv = 0, totClicks = 0;
+      const byChannel = {};
+      for (const ch of (snap.selChannels || [])) {
+        const r = computeChannel((snap.spend || {})[ch], ch, resolveUm((snap.um || {})[ch]), snap.period);
+        byChannel[ch] = r;
+        totSpend += r.spend;
+        totRev   += r.revenue;
+        totConv  += r.conversions;
+        totClicks+= r.clicks;
+      }
+      const fee = ((snap.fees && snap.fees.proposed) || 0) * (snap.period === "annually" ? 1 : 1 / 12);
+      const blendCpa  = totConv > 0 ? totSpend / totConv : null;
+      const blendRoas = totSpend > 0 ? totRev / totSpend : null;
+      const blendAcos = totRev > 0 ? totSpend / totRev : null;
+      const inclCpa   = totConv > 0 ? (totSpend + fee) / totConv : null;
+      const inclRoas  = (totSpend + fee) > 0 ? totRev / (totSpend + fee) : null;
+      const inclAcos  = totRev > 0 ? (totSpend + fee) / totRev : null;
+      return {
+        byChannel, totSpend, totRev, totConv, totClicks, fee,
+        blendCpa, blendRoas, blendAcos, inclCpa, inclRoas, inclAcos,
+      };
+    }
+
+    function encodeState(state) {
+      try {
+        const json = JSON.stringify(Object.assign({ v: STATE_VERSION }, state));
+        return btoa(unescape(encodeURIComponent(json)))
+          .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      } catch (e) { return ""; }
+    }
+
+    function decodeState(encoded) {
+      try {
+        const padded = encoded.replace(/-/g, "+").replace(/_/g, "/");
+        const json = decodeURIComponent(escape(atob(padded)));
+        const obj = JSON.parse(json);
+        if (obj.v !== STATE_VERSION) return null;
+        delete obj.v;
+        return obj;
+      } catch (e) { return null; }
+    }
+
+    // ── Tooltip component ─────────────────────────────────────────────────────
+    function Tooltip({ text }) {
+      const [visible, setVisible] = useState(false);
+      const ref = useRef(null);
+
+      useEffect(() => {
+        if (!visible) return;
+        function handleClick(e) {
+          if (ref.current && !ref.current.contains(e.target)) setVisible(false);
+        }
+        document.addEventListener("mousedown", handleClick);
+        return () => document.removeEventListener("mousedown", handleClick);
+      }, [visible]);
+
+      return (
+        <span ref={ref} className="relative inline-flex items-center ml-1 flex-shrink-0">
+          <button
+            type="button"
+            onMouseEnter={() => setVisible(true)}
+            onMouseLeave={() => setVisible(false)}
+            onClick={(e) => { e.preventDefault(); setVisible(v => !v); }}
+            className="w-4 h-4 rounded-full bg-gray-100 text-gray-400 text-[10px] font-bold inline-flex items-center justify-center hover:bg-skai-100 hover:text-skai-600 transition-colors leading-none cursor-help"
+            aria-label="More info"
+          >?</button>
+          {visible && (
+            <span className="absolute z-50 bottom-full left-0 mb-2 w-64 bg-gray-900 text-white text-xs rounded-lg px-3 py-2.5 shadow-xl leading-relaxed pointer-events-none font-normal normal-case tracking-normal">
+              {text}
+              <span className="absolute top-full left-3 border-4 border-transparent border-t-gray-900" />
+            </span>
+          )}
+        </span>
+      );
+    }
+
+    function MetricInput({ label, value, onChange, placeholder, prefix, suffix, note, tooltip }) {
+      return (
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center">
+            {label}
+            {tooltip && <Tooltip text={tooltip} />}
+          </label>
+          <div className="relative flex items-center">
+            {prefix && (
+              <span className="absolute left-3 text-gray-400 text-sm select-none">{prefix}</span>
+            )}
+            <input
+              type="number"
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              placeholder={placeholder}
+              className={`w-full border border-gray-200 rounded-lg py-2.5 text-sm bg-white
+                focus:outline-none focus:ring-2 focus:ring-skai-300 focus:border-skai-400
+                placeholder:text-gray-300 ${prefix ? "pl-7" : "pl-3"} ${suffix ? "pr-10" : "pr-3"}`}
+            />
+            {suffix && (
+              <span className="absolute right-3 text-gray-400 text-sm select-none">{suffix}</span>
+            )}
+          </div>
+          {note && <p className="text-xs text-skai-400 italic">{note}</p>}
+        </div>
+      );
+    }
+
+    function KpiCard({ label, value, sub, highlight, tooltip }) {
+      return (
+        <div className={`rounded-xl border p-4 ${highlight ? "border-skai-200 bg-skai-50" : "border-gray-200 bg-white"}`}>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1 flex items-center">
+            {label}
+            {tooltip && <Tooltip text={tooltip} />}
+          </p>
+          <p className={`text-2xl font-bold ${highlight ? "text-skai-700" : "text-gray-800"}`}>{value}</p>
+          {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+        </div>
+      );
+    }
+
+    const CH_STYLE = {
+      search: { ring: "border-skai-300 bg-skai-50",         badge: "bg-skai-100 text-skai-700",         dot: "bg-skai-500" },
+      social: { ring: "border-sky-teal-300 bg-sky-teal-50", badge: "bg-sky-teal-100 text-sky-teal-600", dot: "bg-sky-teal-500" },
+      retail: { ring: "border-emerald-300 bg-emerald-50",   badge: "bg-emerald-100 text-emerald-700",   dot: "bg-emerald-400" },
+    };
+
+    function ToolbarBtn({ onClick, title, children, danger }) {
+      return (
+        <button
+          onClick={onClick}
+          title={title}
+          className={`px-2.5 py-1 rounded-md border text-xs font-semibold transition-all
+            ${danger
+              ? "border-red-200 text-red-600 bg-white hover:bg-red-50"
+              : "border-gray-200 text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-300"}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    const TONE_TEXT = {
+      good: "text-emerald-600", ok: "text-emerald-600",
+      warn: "text-[#FFB900]",  bad: "text-[#FF8161]", none: "text-gray-400",
+    };
+
+    function FeasibilityBar({ stat }) {
+      if (!stat || !stat.bins || !stat.bins.length) return null;
+      const sty = CH_STYLE[stat.channel] || {};
+      const def = CHANNELS_DEF.find((c) => c.id === stat.channel);
+      return (
+        <div className="flex items-center gap-2 mt-1.5">
+          <span className="w-5 text-center text-sm flex-shrink-0" title={def ? def.label : ""}>
+            {def ? def.icon : ""}
+          </span>
+          <div className="relative flex items-end gap-px h-6 flex-1 min-w-0">
+            {stat.bins.map((b, i) => {
+              const good =
+                stat.pct != null &&
+                (stat.dir === "le" ? b.x1 <= stat.target + 1e-9 : b.x0 >= stat.target - 1e-9);
+              return (
+                <div
+                  key={i}
+                  className={`flex-1 rounded-sm ${good ? (sty.dot || "bg-skai-400") : "bg-gray-200"}`}
+                  style={{ height: `${Math.max(6, b.frac * 100)}%` }}
+                />
+              );
+            })}
+            <div
+              className="absolute top-0 bottom-0 w-0.5 bg-gray-800"
+              style={{ left: `${stat.markerFrac * 100}%` }}
+              title="Your projection"
+            />
+          </div>
+          <div className="w-44 flex-shrink-0 text-right leading-tight">
+            {stat.pct == null ? (
+              <span className="text-xs text-gray-400">baseline</span>
+            ) : (
+              <span className="text-xs text-gray-500">
+                <span className="font-semibold text-gray-700">{stat.pct}%</span> did this{" "}
+                {stat.verdict && <span className={`font-semibold ${TONE_TEXT[stat.verdict.tone]}`}>· {stat.verdict.label}</span>}
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function SalesValueSimulator() {
+      const [step, setStep] = useState(1);
+
+      const [selChannels, setSelChannels] = useState(["search", "social"]);
+      const [kpi, setKpi]       = useState("cpa");
+      const [period, setPeriod] = useState("annually");
+
+      const [fees,  setFees]  = useState({ proposed: 345000 });
+      const [spend, setSpend] = useState({ search: 7000000, social: 12000000, retail: 0 });
+
+      const [um, setUm] = useState({
+        search: { cpc: "", ctr: "", cvr: "", aov: "" },
+        social: { cpm: "", ctr: "", cvr: "", aov: "" },
+        retail: { cpc: "", ctr: "", cvr: "", aov: "" },
+      });
+
+      const [sc, setSc] = useState({ cvr: 0, cpc: 0, aov: 0 });
+
+      const [scenarios, setScenarios]       = useState([]);
+      const [scenarioName, setScenarioName] = useState("");
+      const [compareIds, setCompareIds]     = useState([]);
+      const [showShareToast, setShowShareToast] = useState(false);
+      const [hydrated, setHydrated]         = useState(false);
+
+      useEffect(() => {
+        let restoredFromUrl = false;
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const s = params.get("s");
+          if (s) {
+            const decoded = decodeState(s);
+            if (decoded) {
+              applyState(decoded);
+              restoredFromUrl = true;
+            }
+          }
+          if (!restoredFromUrl) {
+            const saved = localStorage.getItem(LS_STATE_KEY);
+            if (saved) applyState(JSON.parse(saved));
+          }
+          const sc2 = localStorage.getItem(LS_SCENARIOS_KEY);
+          if (sc2) {
+            const parsed = JSON.parse(sc2);
+            if (Array.isArray(parsed)) setScenarios(parsed);
+          }
+        } catch (err) {
+          console.warn("Hydration failed:", err);
+        }
+        setHydrated(true);
+      }, []);
+
+      useEffect(() => {
+        if (!hydrated) return;
+        try {
+          localStorage.setItem(LS_STATE_KEY, JSON.stringify({ selChannels, kpi, period, fees, spend, um, sc }));
+        } catch (e) {}
+      }, [hydrated, selChannels, kpi, period, fees, spend, um, sc]);
+
+      useEffect(() => {
+        if (!hydrated) return;
+        try {
+          localStorage.setItem(LS_SCENARIOS_KEY, JSON.stringify(scenarios));
+        } catch (e) {}
+      }, [hydrated, scenarios]);
+
+      function applyState(s) {
+        if (!s || typeof s !== "object") return;
+        if (Array.isArray(s.selChannels) && s.selChannels.length) setSelChannels(s.selChannels);
+        if (s.kpi && KPIS.some((k) => k.id === s.kpi)) setKpi(s.kpi);
+        if (s.period === "annually" || s.period === "monthly") setPeriod(s.period);
+        if (s.fees && typeof s.fees === "object") setFees(s.fees);
+        if (s.spend && typeof s.spend === "object") setSpend((prev) => Object.assign({}, prev, s.spend));
+        if (s.um && typeof s.um === "object") setUm((prev) => Object.assign({}, prev, s.um));
+        if (s.sc && typeof s.sc === "object") setSc(s.sc);
+      }
+
+      function currentSnapshot() {
+        return { selChannels, kpi, period, fees, spend, um, sc };
+      }
+
+      function saveScenario() {
+        const name = scenarioName.trim() || `Scenario ${scenarios.length + 1}`;
+        const newScenario = {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          name,
+          savedAt: Date.now(),
+          snapshot: currentSnapshot(),
+        };
+        setScenarios((prev) => [newScenario, ...prev]);
+        setScenarioName("");
+      }
+
+      function loadScenario(id) {
+        const found = scenarios.find((x) => x.id === id);
+        if (found) {
+          applyState(found.snapshot);
+          setStep(4);
+        }
+      }
+
+      function deleteScenario(id) {
+        setScenarios((prev) => prev.filter((s) => s.id !== id));
+        setCompareIds((prev) => prev.filter((sid) => sid !== id));
+      }
+
+      function renameScenario(id, name) {
+        setScenarios((prev) => prev.map((s) => (s.id === id ? Object.assign({}, s, { name }) : s)));
+      }
+
+      function toggleCompare(id) {
+        setCompareIds((prev) => {
+          if (prev.includes(id)) return prev.filter((x) => x !== id);
+          if (prev.length >= 2) return [prev[1], id];
+          return [...prev, id];
+        });
+      }
+
+      function copyShareLink() {
+        const encoded = encodeState(currentSnapshot());
+        const url = `${window.location.origin}${window.location.pathname}?s=${encoded}`;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(
+            () => {
+              setShowShareToast(true);
+              setTimeout(() => setShowShareToast(false), 2500);
+            },
+            () => window.prompt("Copy this share link:", url)
+          );
+        } else {
+          window.prompt("Copy this share link:", url);
+        }
+      }
+
+      function exportPdf() {
+        setStep(4);
+        setTimeout(() => window.print(), 100);
+      }
+
+      function resetAll() {
+        if (!window.confirm("Reset all inputs and clear saved scenarios? This cannot be undone.")) return;
+        setSelChannels(["search", "social"]);
+        setKpi("cpa");
+        setPeriod("annually");
+        setFees({ proposed: 345000 });
+        setSpend({ search: 7000000, social: 12000000, retail: 0 });
+        setUm({
+          search: { cpc: "", ctr: "", cvr: "", aov: "" },
+          social: { cpm: "", ctr: "", cvr: "", aov: "" },
+          retail: { cpc: "", ctr: "", cvr: "", aov: "" },
+        });
+        setSc({ cvr: 0, cpc: 0, aov: 0 });
+        setScenarios([]);
+        setCompareIds([]);
+        setStep(1);
+        try {
+          localStorage.removeItem(LS_STATE_KEY);
+          localStorage.removeItem(LS_SCENARIOS_KEY);
+        } catch (e) {}
+      }
+
+      const R = useMemo(() => {
+        const base = computeAll({ selChannels, period, fees, spend, um });
+
+        const breakevenCvr = base.totRev > 0 ? (base.fee / base.totRev) * 100 : null;
+        const breakevenCpc = base.totSpend > 0 ? (base.fee / base.totSpend) * 100 : null;
+
+        const cvrFactor = 1 + sc.cvr / 100;
+        const cpcFactor = 1 + sc.cpc / 100; // CPC change moves spend only: same clicks, conversions and revenue
+        const aovFactor = 1 + sc.aov / 100;
+
+        const scConv = base.totConv * cvrFactor;
+        const scSpend = base.totSpend * cpcFactor;
+        const baseAov = base.totConv > 0 ? base.totRev / base.totConv : 0;
+        const scRev   = scConv * baseAov * aovFactor;
+        const scCpa   = scSpend > 0 && scConv > 0 ? scSpend / scConv : null;
+        const scRoas  = scSpend > 0 ? scRev / scSpend : null;
+        const scAcos  = scRev > 0 ? scSpend / scRev : null;
+        const scInclCpa  = scConv > 0 ? (scSpend + base.fee) / scConv : null;
+        const scInclAcos = scRev > 0 ? (scSpend + base.fee) / scRev : null;
+
+        return Object.assign({}, base, {
+          breakevenCvr, breakevenCpc,
+          sc: { conv: scConv, rev: scRev, cpa: scCpa, roas: scRoas, acos: scAcos, inclCpa: scInclCpa, inclAcos: scInclAcos },
+        });
+      }, [selChannels, spend, um, fees, period, sc]);
+
+      const compareData = useMemo(() => {
+        return compareIds
+          .map((id) => {
+            const s = scenarios.find((x) => x.id === id);
+            if (!s) return null;
+            return { scenario: s, metrics: computeAll(s.snapshot) };
+          })
+          .filter(Boolean);
+      }, [compareIds, scenarios]);
+
+      const toggleChannel = (ch) =>
+        setSelChannels((prev) =>
+          prev.includes(ch)
+            ? prev.length > 1 ? prev.filter((c) => c !== ch) : prev
+            : [...prev, ch]
+        );
+
+      const totalInputSpend = Object.entries(spend)
+        .filter(([k]) => selChannels.includes(k))
+        .reduce((a, [, v]) => a + (v || 0), 0);
+
+      const scenarioActive = sc.cvr !== 0 || sc.cpc !== 0 || sc.aov !== 0;
+
+      const renderKpiCards = () => {
+        if (kpi === "cpa") {
+          return (
+            <React.Fragment>
+              <KpiCard label="CPA — Media Only"     value={fmt.$(R.blendCpa)} sub="cost per conversion"
+                tooltip="What each conversion costs using media spend alone — no Skai fee included." />
+              <KpiCard label="CPA — incl. Skai Fee" value={fmt.$(R.inclCpa)}  sub="cost per conversion" highlight
+                tooltip="What each conversion costs when you factor in the Skai platform fee. This is the true all-in cost to acquire a customer." />
+            </React.Fragment>
+          );
+        }
+        if (kpi === "roas") {
+          return (
+            <React.Fragment>
+              <KpiCard label="ROAS — Media Only"     value={fmt.x(R.blendRoas)} sub="revenue per $ spent"
+                tooltip="Revenue generated for every dollar of media spend, before accounting for the Skai fee." />
+              <KpiCard label="ROAS — incl. Skai Fee" value={fmt.x(R.inclRoas)}  sub="revenue per $ spent" highlight
+                tooltip="Revenue per dollar of total investment — media spend plus the Skai fee combined." />
+            </React.Fragment>
+          );
+        }
+        return (
+          <React.Fragment>
+            <KpiCard label="ACOS — Media Only"      value={fmt.acos(R.blendAcos)} sub="ad spend ÷ revenue"
+              tooltip="Advertising Cost of Sales using media spend only. Lower % = more efficient. Common in Amazon/retail media." />
+            <KpiCard label="TACOS — incl. Skai Fee" value={fmt.acos(R.inclAcos)}  sub="total cost ÷ revenue" highlight
+              tooltip="Total Advertising Cost of Sales — includes both media spend and the Skai fee in the numerator. The true efficiency metric for retail media." />
+          </React.Fragment>
+        );
+      };
+
+      const renderRowKpi = (r) => {
+        if (kpi === "cpa")  return fmt.$(r.cpa);
+        if (kpi === "roas") return fmt.x(r.roas);
+        return fmt.acos(r.acos);
+      };
+
+      const renderTotalKpi = () => {
+        if (kpi === "cpa")  return fmt.$(R.blendCpa);
+        if (kpi === "roas") return fmt.x(R.blendRoas);
+        return fmt.acos(R.blendAcos);
+      };
+
+      const kpiColumnLabel = kpi === "cpa" ? "CPA" : kpi === "roas" ? "ROAS" : "ACOS";
+
+      const scenarioImpactKpi = (() => {
+        if (kpi === "cpa")  return { label: "CPA",  base: R.blendCpa,  sc: R.sc.cpa,  fmtFn: fmt.$,    goodIfHigher: false };
+        if (kpi === "roas") return { label: "ROAS", base: R.blendRoas, sc: R.sc.roas, fmtFn: fmt.x,    goodIfHigher: true  };
+        return                  { label: "ACOS", base: R.blendAcos, sc: R.sc.acos, fmtFn: fmt.acos, goodIfHigher: false };
+      })();
+
+      return (
+        <div className="min-h-screen bg-gray-50" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+          <style>{`
+            @media print {
+              .no-print { display: none !important; }
+              body { background: #ffffff !important; }
+              * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            }
+          `}</style>
+
+          {/* Internal use only banner */}
+          <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 no-print">
+            <div className="max-w-2xl mx-auto flex items-center gap-2">
+              <span className="text-amber-600 text-sm">⚠️</span>
+              <p className="text-xs text-amber-700 font-semibold">
+                Internal use only — for Skai sellers and industry leads. Do not share this tool or its raw outputs directly with clients. Use results in a slide or present live.
+              </p>
+            </div>
+          </div>
+
+          {/* Top bar */}
+          <div className="bg-white border-b border-gray-200 px-6 py-3 sticky top-0 z-10 no-print">
+            <div className="max-w-2xl mx-auto flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0">
+                <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAlgAAAGQCAYAAAByNR6YAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAACWKADAAQAAAABAAABkAAAAADwbVMsAAAiAUlEQVR4Ae3dC3Ijt9UGUM1f3kdclewlXrKzl7hqvJIJMb9gU1KT7AceF8CZKkcS2Q/gXHT3R3RLeXvzjwABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBA4F3gn//49ce/fv3130AIECBAoJ/A//XbtT0TIFBaIIWr0tu0PQIECBA4LiBgHTezBoGQAsJVyLJoFAECiwoIWIsWXrfnEnBLcK566g0BAuMLCFjj11APFhdI4erHj7ffF2fQfQIECIQSELBClUNjCBwTEK6OeVmaAAECrQR+abUj+yFAoKyAcFXW09YInBHIt+efzSJ/+/b2W972f79//0/+3te5BQSsueurdxMLPDuhT9xtXSPQXeA+VN2Ow5f/7o/V2y+jvKXAJWi9ZBt+AQFr+BLqwIoCfmNwxarrc2+BPGu8J1Q9a2sKXILWM6E53vMM1hx11IuFBISrhYqtq2EEcrgq2aD3oLVjDqzkXm2rlYCA1UrafggUEMi3JgpsyiYIENgpkD7U3N/m27na7sXS9h3bu7mGWVDAGqZUGrq6QI1P0Kub6j+BVwKtZoxTgBOyXlVjrPcFrLHqpbWLCghXixZet7sKtApXuZNCVpaY46uANUcd9WJiAeFq4uLqWliBXrNJNW9FhsWetGF+i3DSwurWPAJOuPPUUk/GEHj2oeb+b1p97k2pYzXNnP3x5/dvn7fv57EEBKyx6qW1iwm0vkWxGK/uEtgUuA9KOVDt/LtVP0PRs4C2ucONF9M2du5zY20vRRAQsCJUQRsIbAgIVxsoXiJQWeA9HF36Y6DvwejblaD1HvLMYlWud83NK15NXdsmcFLgyok5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izXKhnYJpNql8bBr4cYLvbfr1N/Hyk1Nx85t3IftY25n/upYyhK+EigjIGCVcZxyK+kic5tp+tm3dPJN3xwJXELVTzr/80AgegBJs6xXb/e9Hy/f0rEQNUwKVg8GqJcJXBQQsC4CrrJ6vjjkwJX7/WwW4rZOkX9nwl2RHdtIdYEUQD6Pqeo7PbCDFIyOfKh4tOmIQUuwelQtrxMoIyBglXFcdis5eJUCyGEqba/Eha1Uu2ynnkCaJUqzRfX2cH7LaXyn23ylxuJ90EqtKn387OmpYLVHyTIErgtcesbg+u5t4YpAvgV3ZRs91i11serR9iP77FmfEY17ej2ra23L3O+aYSt/cKnVl9yHZ4413yvdr579Kd2Xmu62/VxAwHru410CBAg0Fbi/uJ8JXTlMpUa7WDctnZ0RIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIEBBP4H51LDnuzs2UsAAAAASUVORK5CYII=" alt="Skai" className="h-7 w-auto flex-shrink-0" style={{filter: "brightness(0) saturate(100%)"}} />
+                <span className="text-gray-300 mx-1">|</span>
+                <span className="text-sm text-gray-500 font-medium truncate">Value Simulator</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <ToolbarBtn onClick={copyShareLink} title="Copy share link to share this scenario with a colleague">↗ Share</ToolbarBtn>
+                <ToolbarBtn onClick={exportPdf} title="Export Results as PDF (choose Save as PDF in the print dialog)">⬇ PDF</ToolbarBtn>
+                <ToolbarBtn onClick={resetAll} title="Reset everything" danger>↻ Reset</ToolbarBtn>
+              </div>
+            </div>
+            <div className="max-w-2xl mx-auto mt-1 flex items-center justify-end">
+              <span className="text-[10px] text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full border border-gray-100">
+                Benchmarks: Skai Q3 2026
+              </span>
+            </div>
+          </div>
+
+          {/* Step progress */}
+          <div className="bg-white border-b border-gray-100 px-6 py-3 no-print">
+            <div className="max-w-2xl mx-auto flex items-center gap-1">
+              {STEPS.map((s, i) => {
+                const idx = i + 1;
+                const done = idx < step;
+                const active = idx === step;
+                return (
+                  <div key={s} className="flex items-center gap-1">
+                    <button
+                      onClick={() => done && setStep(idx)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all
+                        ${active  ? "bg-skai-600 text-white shadow-sm"
+                        : done    ? "bg-skai-100 text-skai-700 hover:bg-skai-200 cursor-pointer"
+                        :           "bg-gray-100 text-gray-400 cursor-default"}`}
+                    >
+                      <span>{done ? "✓" : idx}</span>
+                      <span className="hidden sm:inline">{s}</span>
+                    </button>
+                    {i < STEPS.length - 1 && (
+                      <div className={`h-px w-4 flex-shrink-0 ${done ? "bg-skai-300" : "bg-gray-200"}`} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
+
+            {/* STEP 1 */}
+            {step === 1 && (
+              <React.Fragment>
+                <section className="space-y-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 flex items-center">
+                      Which channels does this prospect run?
+                      <Tooltip text="Select all channels this prospect actively runs ads on. Only selected channels will factor into the value calculation. You can go back and change this at any time." />
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-0.5">Select all that apply — we'll only ask for relevant metrics.</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {CHANNELS_DEF.map((ch) => {
+                      const sel = selChannels.includes(ch.id);
+                      return (
+                        <button
+                          key={ch.id}
+                          onClick={() => toggleChannel(ch.id)}
+                          className={`p-4 rounded-xl border-2 text-left transition-all hover:shadow-sm
+                            ${sel ? CH_STYLE[ch.id].ring + " shadow-sm" : "border-gray-200 bg-white hover:border-gray-300"}`}
+                        >
+                          <div className="text-2xl mb-2">{ch.icon}</div>
+                          <div className="font-semibold text-gray-800 text-sm">{ch.label}</div>
+                          <div className="text-xs text-gray-400 mt-0.5">{ch.desc}</div>
+                          {sel && (
+                            <div className={`mt-2 inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${CH_STYLE[ch.id].badge}`}>
+                              ✓ Selected
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800 flex items-center">
+                      What's their primary KPI?
+                      <Tooltip text="Choose the metric this prospect cares most about. The simulator frames results and collects data accordingly. You can always change it on the Results screen." />
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-0.5">We'll tailor the data collection and results to what matters most.</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {KPIS.map((k) => {
+                      const kpiTooltips = {
+                        cpa: "Cost Per Acquisition — how much it costs to generate one conversion. Lower is better. Best for brands focused on efficiency: e-commerce, lead gen, app installs.",
+                        roas: "Return on Ad Spend — revenue generated per dollar of ad spend. Higher is better. Best for revenue-focused brands tracking overall advertising ROI.",
+                        acos: "Advertising Cost of Sales — ad spend as a % of revenue. Lower is better. Standard in Amazon and retail media contexts. TACOS adds the platform fee to the numerator.",
+                      };
+                      return (
+                        <button
+                          key={k.id}
+                          onClick={() => setKpi(k.id)}
+                          className={`p-4 rounded-xl border-2 text-left transition-all
+                            ${kpi === k.id ? "border-skai-400 bg-skai-50" : "border-gray-200 bg-white hover:border-gray-300"}`}
+                        >
+                          <div className="text-2xl mb-2">{k.icon}</div>
+                          <div className="font-semibold text-gray-800 text-sm">{k.label}</div>
+                          <div className="text-xs text-gray-400 mt-0.5">{k.desc}</div>
+                          <div className="text-xs text-gray-300 mt-2 leading-relaxed">{kpiTooltips[k.id]}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <h2 className="text-lg font-bold text-gray-800 flex items-center">
+                    View results as:
+                    <Tooltip text="All inputs are collected as annual figures. Choose 'monthly' to see results divided by 12 — useful for monthly budget conversations." />
+                  </h2>
+                  <div className="flex gap-2">
+                    {["annually", "monthly"].map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPeriod(p)}
+                        className={`px-5 py-2 rounded-lg text-sm font-semibold capitalize transition-all
+                          ${period === p ? "bg-skai-600 text-white shadow-sm" : "bg-white border border-gray-200 text-gray-600 hover:border-gray-300"}`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </React.Fragment>
+            )}
+
+            {/* STEP 2 */}
+            {step === 2 && (
+              <React.Fragment>
+                <div>
+                  <h2 className="text-lg font-bold text-gray-800">Spending & Fees</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">Enter annual figures. We'll convert for monthly view automatically.</p>
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center">
+                    Skai Platform Fee (Annual)
+                    <Tooltip text="The annual Skai platform fee you're quoting this prospect. This drives two key calculations: (1) the minimum performance improvement needed just to break even, and (2) the blended KPIs shown in Results that include the software cost." />
+                  </h3>
+                  <div className="max-w-xs">
+                    <MetricInput
+                      label="Proposed Fee"
+                      value={fees.proposed}
+                      onChange={(v) => setFees((f) => Object.assign({}, f, { proposed: parseFloat(v) || 0 }))}
+                      prefix="$"
+                      note="The fee you'll be quoting this prospect"
+                      tooltip="Enter the annual contract value for Skai. If you're quoting monthly, multiply by 12."
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center">
+                    Annual Ad Spend by Channel
+                    <Tooltip text="Enter the prospect's total annual media spend on each channel — not including any platform fees. If you only have monthly figures, multiply by 12. Set a channel to 0 to exclude it." />
+                  </h3>
+                  {CHANNELS_DEF.filter((c) => selChannels.includes(c.id)).map((ch) => (
+                    <div key={ch.id} className="flex items-start gap-4">
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0 ${CH_STYLE[ch.id].ring} border`}>
+                        {ch.icon}
+                      </div>
+                      <div className="flex-1">
+                        <MetricInput
+                          label={ch.label}
+                          value={spend[ch.id]}
+                          onChange={(v) => setSpend((s) => Object.assign({}, s, { [ch.id]: parseFloat(v) || 0 }))}
+                          prefix="$"
+                          tooltip={`Annual media spend on ${ch.label} (${ch.desc}). Used to calculate impressions, clicks, and conversions for this channel.`}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="pt-4 border-t border-gray-100 flex justify-between items-center">
+                    <span className="text-sm text-gray-500 font-semibold">Total Annual Spend</span>
+                    <span className="text-xl font-bold text-gray-800">{fmt.$(totalInputSpend)}</span>
+                  </div>
+                </div>
+              </React.Fragment>
+            )}
+
+            {/* STEP 3 */}
+            {step === 3 && (
+              <React.Fragment>
+                <div>
+                  <h2 className="text-lg font-bold text-gray-800 flex items-center">
+                    Performance Data
+                    <Tooltip text="Enter the prospect's current performance numbers if you have them. Any field you leave blank automatically falls back to Skai Q3 2026 industry benchmarks for that channel — so you can run a complete simulation even without client data." />
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Enter what you have — leave blank to use Skai's Q3 2026 industry benchmarks.
+                  </p>
+                </div>
+
+                {CHANNELS_DEF.filter((c) => selChannels.includes(c.id)).map((ch) => {
+                  const bm = BM[ch.id];
+                  const isSocial = ch.id === "social";
+                  const pricingKey = isSocial ? "cpm" : "cpc";
+                  const pricingLabel = isSocial ? "CPM (Cost per 1K Impr.)" : "CPC (Cost per Click)";
+                  const pricingBm = isSocial ? `$${bm.cpm}` : `$${bm.cpc}`;
+
+                  const pricingTooltip = isSocial
+                    ? "Cost Per 1,000 Impressions — the price paid for 1,000 ad views on social. Lower CPM means the same budget reaches more people. Skai's audience tools can improve CPM efficiency."
+                    : "Cost Per Click — what the prospect currently pays each time someone clicks their ad. Skai's bidding intelligence typically reduces CPC by optimizing bids across the auction.";
+
+                  return (
+                    <div key={ch.id} className={`bg-white rounded-xl border-2 ${CH_STYLE[ch.id].ring} overflow-hidden`}>
+                      <div className={`px-5 py-3 flex items-center gap-2 ${CH_STYLE[ch.id].ring}`}>
+                        <span className="text-lg">{ch.icon}</span>
+                        <span className="font-bold text-gray-800">{ch.label}</span>
+                        <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${CH_STYLE[ch.id].badge}`}>
+                          Spend: {fmt.$(spend[ch.id])} / yr
+                        </span>
+                      </div>
+                      <div className="p-5 grid grid-cols-2 gap-4">
+                        <MetricInput
+                          label={pricingLabel}
+                          value={um[ch.id][pricingKey]}
+                          onChange={(v) => setUm((prev) => Object.assign({}, prev, { [ch.id]: Object.assign({}, prev[ch.id], { [pricingKey]: v }) }))}
+                          prefix="$"
+                          placeholder={`${pricingBm.replace("$","")} (benchmark)`}
+                          note={`Benchmark: ${pricingBm}`}
+                          tooltip={pricingTooltip}
+                        />
+                        <MetricInput
+                          label="Clickthrough Rate (CTR)"
+                          value={um[ch.id].ctr}
+                          onChange={(v) => setUm((prev) => Object.assign({}, prev, { [ch.id]: Object.assign({}, prev[ch.id], { ctr: v }) }))}
+                          suffix="%"
+                          placeholder={`${(bm.ctr * 100).toFixed(2)} (benchmark)`}
+                          note={`Benchmark: ${(bm.ctr * 100).toFixed(2)}%`}
+                          tooltip="Click-Through Rate — the % of impressions that result in a click. Higher CTR means ads are resonating with the audience. Varies significantly by channel and ad format."
+                        />
+                        <MetricInput
+                          label="Conversion Rate (CVR)"
+                          value={um[ch.id].cvr}
+                          onChange={(v) => setUm((prev) => Object.assign({}, prev, { [ch.id]: Object.assign({}, prev[ch.id], { cvr: v }) }))}
+                          suffix="%"
+                          placeholder={`${(bm.cvr * 100).toFixed(2)} (benchmark)`}
+                          note={`Benchmark: ${(bm.cvr * 100).toFixed(2)}%`}
+                          tooltip="Conversion Rate — the % of clicks that result in a conversion (purchase, sign-up, etc.). Often the highest-leverage metric: even a small CVR improvement creates outsized revenue impact."
+                        />
+                        <MetricInput
+                          label="Avg. Order Value (AOV)"
+                          value={um[ch.id].aov}
+                          onChange={(v) => setUm((prev) => Object.assign({}, prev, { [ch.id]: Object.assign({}, prev[ch.id], { aov: v }) }))}
+                          prefix="$"
+                          placeholder={`${bm.aov} (benchmark)`}
+                          note={`Benchmark: $${bm.aov}`}
+                          tooltip="Average Order Value — the average dollar amount per conversion. Higher AOV means each conversion generates more revenue. Skai's cross-channel intelligence can help target higher-intent, higher-value buyers."
+                        />
+                      </div>
+                      <div className="px-5 py-2.5 bg-gray-50 border-t border-gray-100">
+                        <p className="text-xs text-gray-400">
+                          Blank fields fall back to Skai Q3 2026 {ch.label.toLowerCase()} benchmarks.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            )}
+
+            {/* STEP 4 */}
+            {step === 4 && (
+              <React.Fragment>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800">Results</h2>
+                    <p className="text-sm text-gray-500 mt-0.5 capitalize">
+                      {period} view · KPI: {kpi.toUpperCase()} · Proposed fee: {fmt.$(fees.proposed)}/yr
+                    </p>
+                  </div>
+                  <div className="flex gap-1.5 no-print">
+                    {["annually", "monthly"].map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPeriod(p)}
+                        className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all
+                          ${period === p ? "bg-skai-600 text-white" : "bg-white border border-gray-200 text-gray-500 hover:border-gray-300"}`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <KpiCard label="Total Ad Spend"     value={fmt.$(R.totSpend)}  sub={period}
+                    tooltip="Combined media spend across all selected channels for the selected period." />
+                  <KpiCard label="Platform Fee"       value={fmt.$(R.fee)}       sub={`${period} proposed`}
+                    tooltip="The Skai platform fee for the selected period. Annually = the full proposed fee. Monthly = fee ÷ 12." />
+                  <KpiCard label="Attributed Revenue" value={fmt.$(R.totRev)}    sub={period}
+                    tooltip="Estimated total revenue generated from the modeled ad spend, based on the performance inputs and benchmarks you provided." />
+                  <KpiCard label="Net ROI (incl. fee)" value={fmt.roi(netRoi(R.totRev, R.totSpend, R.fee))} sub="per $ invested" highlight
+                    tooltip="Net return on total investment including both media spend and the Skai fee. Formula: (Revenue − Media Spend − Fee) ÷ (Media Spend + Fee). A positive number means this account generates more value than it costs to run." />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {renderKpiCards()}
+                </div>
+
+                <div className="rounded-xl overflow-hidden" style={{ background: "linear-gradient(135deg, #406EF1 0%, #111428 100%)" }}>
+                  <div className="px-6 py-5 text-white">
+                    <p className="text-xs font-bold opacity-60 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      💡 The Skai Value Case
+                      <span className="relative group inline-flex">
+                        <span className="w-4 h-4 rounded-full bg-white/20 text-white text-[10px] font-bold inline-flex items-center justify-center cursor-help hover:bg-white/30 transition-colors">?</span>
+                        <span className="absolute z-50 bottom-full left-0 mb-2 w-64 bg-gray-900 text-white text-xs rounded-lg px-3 py-2.5 shadow-xl leading-relaxed pointer-events-none hidden group-hover:block font-normal normal-case tracking-normal">
+                          This is the breakeven math: how much performance improvement does this account need just to offset the Skai fee? Anything above this threshold is net positive ROI. Use this as your "floor" in the value conversation — not the ceiling.
+                          <span className="absolute top-full left-3 border-4 border-transparent border-t-gray-900" />
+                        </span>
+                      </span>
+                    </p>
+                    <p className="text-base font-semibold leading-relaxed">
+                      To make the{" "}
+                      <span className="font-bold">{fmt.$(fees.proposed)}</span> annual Skai fee pay for itself,
+                      this account only needs to improve{" "}
+                      <span className="underline decoration-white/40 font-bold">
+                        conversion rate by {R.breakevenCvr != null ? R.breakevenCvr.toFixed(2) : "—"}%
+                      </span>
+                      {" "}or reduce{" "}
+                      <span className="underline decoration-white/40 font-bold">
+                        CPC by {R.breakevenCpc != null ? R.breakevenCpc.toFixed(2) : "—"}%
+                      </span>.
+                    </p>
+                    <p className="text-xs opacity-50 mt-3">
+                      Skai customers typically see 5–15% efficiency gains within the first 90 days.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 p-5 no-print">
+                  <h3 className="font-bold text-gray-800 mb-0.5 flex items-center">
+                    What if Skai improves performance?
+                    <Tooltip text="Drag the sliders to model the impact of Skai-driven performance improvements. The histogram bars below each slider show how real Skai accounts actually changed that metric quarter-over-quarter — giving you an evidence-based confidence level for any projection you make." />
+                  </h3>
+                  <p className="text-xs text-gray-400 mb-5">Drag the sliders to model impact. The histograms show how real Skai accounts moved these metrics QoQ.</p>
+
+                  <div className="space-y-5">
+                    {[
+                      { key: "cvr", label: "Conversion Rate evolution",      hint: "+5% means 5% more conversions from the same clicks", min: -30, max: 30 },
+                      { key: "cpc", label: "CPC evolution",                  hint: "-10% means CPC drops 10%: same clicks, conversions and revenue, but you pay less (ROAS rises). +10% means you pay more for the same clicks.", min: -30, max: 30 },
+                      { key: "aov", label: "Avg. Order Value evolution",     hint: "+5% means each purchase is 5% larger on average", min: -30, max: 30 },
+                    ].map(({ key, label, hint, min, max }) => (
+                      <div key={key}>
+                        <div className="flex justify-between items-baseline mb-1">
+                          <label className="text-sm text-gray-700 font-medium">{label}</label>
+                          <span className={`text-sm font-bold ml-2 flex-shrink-0 ${
+                            sc[key] === 0 ? "text-gray-300" : (key === "cpc" ? sc[key] < 0 : sc[key] > 0) ? "text-emerald-600" : "text-red-500"
+                          }`}>
+                            {sc[key] > 0 ? "+" : ""}{sc[key]}%
+                          </span>
+                        </div>
+                        <input
+                          type="range" min={min} max={max} step={1}
+                          value={sc[key]}
+                          onChange={(e) => setSc((s) => Object.assign({}, s, { [key]: parseInt(e.target.value) }))}
+                          className="w-full accent-skai-600"
+                        />
+                        <p className="text-xs text-gray-400 mt-0.5">{hint}</p>
+                        <div className="mt-1.5 space-y-1">
+                          <p className="text-[10px] text-gray-400 uppercase tracking-wider flex items-center">
+                            How real Skai accounts changed this, QoQ
+                            <Tooltip text="Each bar represents a bucket of Skai accounts and how much their metric changed quarter-over-quarter. Colored bars = accounts that achieved at least your projected improvement. The vertical line is your current slider position. Stick to 'Very achievable' or 'Realistic' ratings in client conversations." />
+                          </p>
+                          {selChannels.map((ch) => (
+                            <FeasibilityBar key={ch} stat={qoqStats(ch, key, sc[key])} />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+
+                    {scenarioActive && (
+                      <button
+                        onClick={() => setSc({ cvr: 0, cpc: 0, aov: 0 })}
+                        className="text-xs text-skai-500 hover:text-skai-700 font-medium"
+                      >
+                        ↩ Reset sliders to baseline
+                      </button>
+                    )}
+                  </div>
+
+                  {scenarioActive && (
+                    <div className="mt-5 pt-5 border-t border-gray-100">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center">
+                        Impact vs. Baseline
+                        <Tooltip text="These numbers show how the modeled performance improvements change your key outcomes relative to the baseline (no improvement). Use this section to illustrate the upside story beyond breakeven." />
+                      </p>
+                      <div className="grid grid-cols-3 gap-3">
+                        {[
+                          { label: "Conversions", base: R.totConv, sc: R.sc.conv, fmtFn: fmt.n, goodIfHigher: true  },
+                          { label: "Revenue",     base: R.totRev,  sc: R.sc.rev,  fmtFn: fmt.$, goodIfHigher: true  },
+                          scenarioImpactKpi,
+                        ].map(({ label, base, sc: scVal, fmtFn, goodIfHigher }) => {
+                          const delta = base > 0 ? ((scVal / base) - 1) * 100 : 0;
+                          const improved = goodIfHigher ? delta > 0 : delta < 0;
+                          return (
+                            <div key={label} className="text-center bg-gray-50 rounded-lg p-3">
+                              <p className="text-xs text-gray-500 mb-1">{label}</p>
+                              <p className="text-base font-bold text-gray-800">{fmtFn(scVal)}</p>
+                              <p className={`text-xs font-semibold mt-0.5 ${improved ? "text-emerald-600" : delta === 0 ? "text-gray-400" : "text-red-500"}`}>
+                                {fmt.delta(delta)}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                  <h3 className="font-bold text-gray-800 mb-4 flex items-center">
+                    Channel Breakdown
+                    <Tooltip text="Performance broken out by channel using the inputs and benchmarks from Step 3. Channels with missing inputs use Q3 2026 industry benchmarks." />
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                          <th className="text-left pb-2 font-semibold">Channel</th>
+                          <th className="text-right pb-2 font-semibold">Spend</th>
+                          <th className="text-right pb-2 font-semibold">Clicks</th>
+                          <th className="text-right pb-2 font-semibold">Conv.</th>
+                          <th className="text-right pb-2 font-semibold">Revenue</th>
+                          <th className="text-right pb-2 font-semibold">{kpiColumnLabel}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {CHANNELS_DEF.filter((c) => selChannels.includes(c.id)).map((ch) => {
+                          const r = R.byChannel[ch.id];
+                          return (
+                            <tr key={ch.id}>
+                              <td className="py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-2 h-2 rounded-full ${CH_STYLE[ch.id].dot}`} />
+                                  {ch.label}
+                                </div>
+                              </td>
+                              <td className="py-2.5 text-right text-gray-700">{fmt.$(r.spend)}</td>
+                              <td className="py-2.5 text-right text-gray-700">{fmt.n(r.clicks)}</td>
+                              <td className="py-2.5 text-right text-gray-700">{fmt.n(r.conversions)}</td>
+                              <td className="py-2.5 text-right text-gray-700">{fmt.$(r.revenue)}</td>
+                              <td className="py-2.5 text-right font-semibold text-gray-800">{renderRowKpi(r)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-gray-200 font-bold text-gray-800">
+                          <td className="pt-2.5">Total</td>
+                          <td className="pt-2.5 text-right">{fmt.$(R.totSpend)}</td>
+                          <td className="pt-2.5 text-right">{fmt.n(R.totClicks)}</td>
+                          <td className="pt-2.5 text-right">{fmt.n(R.totConv)}</td>
+                          <td className="pt-2.5 text-right">{fmt.$(R.totRev)}</td>
+                          <td className="pt-2.5 text-right">{renderTotalKpi()}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Scenario Management */}
+                <div className="bg-white rounded-xl border border-gray-200 p-5 no-print">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="font-bold text-gray-800 flex items-center">
+                      Saved Scenarios
+                      <Tooltip text="Save the current configuration with a name, then check any two to compare them side-by-side. Great for presenting a conservative vs. ambitious case, or comparing two different prospect profiles in the same meeting." />
+                    </h3>
+                    <span className="text-xs text-gray-400">{scenarios.length} saved</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-4">
+                    Save the current configuration with a name, then tick any two to compare them side-by-side.
+                  </p>
+
+                  <div className="flex gap-2 mb-4">
+                    <input
+                      type="text"
+                      value={scenarioName}
+                      onChange={(e) => setScenarioName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveScenario(); }}
+                      placeholder={`Scenario name (e.g. "Acme — Q3 pitch")`}
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm
+                        focus:outline-none focus:ring-2 focus:ring-skai-300 focus:border-skai-400"
+                    />
+                    <button
+                      onClick={saveScenario}
+                      className="px-4 py-2 rounded-lg text-sm font-semibold bg-skai-600 text-white hover:bg-skai-700 shadow-sm"
+                    >
+                      + Save current
+                    </button>
+                  </div>
+
+                  {scenarios.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic text-center py-3">
+                      No saved scenarios yet — save the current setup to start comparing.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {scenarios.map((s) => {
+                        const checked = compareIds.includes(s.id);
+                        const m = computeAll(s.snapshot);
+                        return (
+                          <li key={s.id} className={`rounded-lg border p-3 transition-all
+                            ${checked ? "border-skai-300 bg-skai-50/50" : "border-gray-200 bg-white"}`}>
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleCompare(s.id)}
+                                className="w-4 h-4 accent-skai-600 flex-shrink-0"
+                                title="Add to compare (max 2)"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <input
+                                  type="text"
+                                  value={s.name}
+                                  onChange={(e) => renameScenario(s.id, e.target.value)}
+                                  className="w-full bg-transparent font-semibold text-sm text-gray-800
+                                    border-0 border-b border-transparent hover:border-gray-200
+                                    focus:outline-none focus:border-skai-400 px-0 py-0.5"
+                                />
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {fmt.date(s.savedAt)} · {(s.snapshot.selChannels || []).join(" + ")} · {String(s.snapshot.kpi || "cpa").toUpperCase()}
+                                </p>
+                              </div>
+                              <div className="flex flex-col items-end flex-shrink-0">
+                                <span className="text-xs font-semibold text-gray-700">{fmt.$(m.totRev)}</span>
+                                <span className="text-[10px] text-gray-400">revenue</span>
+                              </div>
+                              <div className="flex gap-1 flex-shrink-0">
+                                <button
+                                  onClick={() => loadScenario(s.id)}
+                                  className="px-2 py-1 rounded text-xs font-semibold text-skai-600 hover:bg-skai-100"
+                                  title="Load this scenario into the form"
+                                >
+                                  Load
+                                </button>
+                                <button
+                                  onClick={() => deleteScenario(s.id)}
+                                  className="px-2 py-1 rounded text-xs font-semibold text-red-500 hover:bg-red-50"
+                                  title="Delete"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  {compareData.length === 2 && (
+                    <div className="mt-5 pt-5 border-t border-gray-100">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Side-by-side compare</p>
+                        <button
+                          onClick={() => setCompareIds([])}
+                          className="text-xs text-gray-400 hover:text-gray-600"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-xs text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                              <th className="text-left pb-2 font-semibold">Metric</th>
+                              <th className="text-right pb-2 font-semibold truncate max-w-[120px]" title={compareData[0].scenario.name}>
+                                {compareData[0].scenario.name}
+                              </th>
+                              <th className="text-right pb-2 font-semibold truncate max-w-[120px]" title={compareData[1].scenario.name}>
+                                {compareData[1].scenario.name}
+                              </th>
+                              <th className="text-right pb-2 font-semibold">Δ</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                            {[
+                              { label: "Total Spend",       a: compareData[0].metrics.totSpend, b: compareData[1].metrics.totSpend, fmtFn: fmt.$,    goodIfHigher: false },
+                              { label: "Platform Fee",      a: compareData[0].metrics.fee,      b: compareData[1].metrics.fee,      fmtFn: fmt.$,    goodIfHigher: false },
+                              { label: "Conversions",       a: compareData[0].metrics.totConv,  b: compareData[1].metrics.totConv,  fmtFn: fmt.n,    goodIfHigher: true  },
+                              { label: "Revenue",           a: compareData[0].metrics.totRev,   b: compareData[1].metrics.totRev,   fmtFn: fmt.$,    goodIfHigher: true  },
+                              { label: "CPA (media)",       a: compareData[0].metrics.blendCpa, b: compareData[1].metrics.blendCpa, fmtFn: fmt.$,    goodIfHigher: false },
+                              { label: "ROAS (media)",      a: compareData[0].metrics.blendRoas,b: compareData[1].metrics.blendRoas,fmtFn: fmt.x,    goodIfHigher: true  },
+                              { label: "ACOS (media)",      a: compareData[0].metrics.blendAcos,b: compareData[1].metrics.blendAcos,fmtFn: fmt.acos, goodIfHigher: false },
+                              { label: "TACOS (incl. fee)", a: compareData[0].metrics.inclAcos, b: compareData[1].metrics.inclAcos, fmtFn: fmt.acos, goodIfHigher: false },
+                            ].map(({ label, a, b, fmtFn, goodIfHigher }) => {
+                              const delta = a != null && a !== 0 ? ((b - a) / a) * 100 : null;
+                              const improved = delta != null && (goodIfHigher ? delta > 0 : delta < 0);
+                              return (
+                                <tr key={label}>
+                                  <td className="py-2 text-gray-600">{label}</td>
+                                  <td className="py-2 text-right text-gray-700">{fmtFn(a)}</td>
+                                  <td className="py-2 text-right text-gray-700">{fmtFn(b)}</td>
+                                  <td className={`py-2 text-right font-semibold ${
+                                    delta == null ? "text-gray-300"
+                                    : improved ? "text-emerald-600"
+                                    : delta === 0 ? "text-gray-400"
+                                    : "text-red-500"}`}>
+                                    {delta == null ? "—" : fmt.delta(delta)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {compareData.length === 1 && (
+                    <p className="mt-4 text-xs text-skai-500 text-center italic">
+                      Select one more scenario to compare side-by-side.
+                    </p>
+                  )}
+                </div>
+
+                <p className="text-xs text-gray-300 text-center">
+                  For informational purposes only. Results based on inputs and Q3 2026 benchmarks — actual performance may vary.
+                </p>
+              </React.Fragment>
+            )}
+
+            {/* Navigation */}
+            <div className="flex justify-between items-center pt-4 border-t border-gray-200 no-print">
+              <button
+                onClick={() => setStep((s) => Math.max(1, s - 1))}
+                className={`px-5 py-2.5 rounded-lg text-sm font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 transition-all
+                  ${step === 1 ? "invisible" : ""}`}
+              >
+                ← Back
+              </button>
+
+              {step < 4 ? (
+                <button
+                  onClick={() => setStep((s) => s + 1)}
+                  className="px-6 py-2.5 rounded-lg text-sm font-semibold bg-skai-600 text-white hover:bg-skai-700 shadow-sm transition-all"
+                >
+                  Next →
+                </button>
+              ) : (
+                <button
+                  onClick={copyShareLink}
+                  className="px-6 py-2.5 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm transition-all"
+                >
+                  ↗ Copy Share Link
+                </button>
+              )}
+            </div>
+          </div>
+
+          {showShareToast && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-20 no-print">
+              ✓ Share link copied to clipboard
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<SalesValueSimulator />);
+  </script>
+</body>
+</html>
